@@ -1,4 +1,4 @@
-import React from "react";
+// React default import not needed with the new JSX runtime
 import { Paginator } from "primereact/paginator";
 import type { PaginatorPageChangeEvent } from "primereact/paginator";
 
