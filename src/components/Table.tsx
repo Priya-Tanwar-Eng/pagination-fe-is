@@ -18,88 +18,104 @@ interface Product {
 export default function Table() {
   const [page, setPage] = useState(1);
   const [first, setFirst] = useState(0);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectionVersion, setSelectionVersion] = useState(0); // ✅ force re-render
+  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
+  const [deselectedIds, setDeselectedIds] = useState<Record<string, boolean>>({});
+  const [bulkCount, setBulkCount] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectCount, setSelectCount] = useState("");
-  const [isLoadingSelect, setIsLoadingSelect] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { data: products, pagination, loading, error } = useDataFetch("artworks", page);
+  const limit = pagination?.limit ?? 12;
+
+  const isRowSelected = (rowIndex: number, id: string): boolean => {
+    const globalIndex = (page - 1) * limit + rowIndex;
+    if (deselectedIds[id]) return false;
+    if (globalIndex < bulkCount) return true;
+    return !!selectedIds[id];
+  };
 
   const onPageChange = (e: PaginatorPageChangeEvent) => {
     setFirst(e.first);
     setPage(e.page + 1);
   };
 
-  const toggleRow = (id: string) => {
-    setSelectedIds((prev) => {
-      const updated = new Set(prev);
-      if (updated.has(id)) updated.delete(id);
-      else updated.add(id);
-      return updated;
-    });
-    setSelectionVersion((v) => v + 1);
-  };
+  const toggleRow = (id: string, rowIndex: number) => {
+    const currentlySelected = isRowSelected(rowIndex, id);
+    const globalIndex = (page - 1) * limit + rowIndex;
+    const inBulkRange = globalIndex < bulkCount;
 
-  const toggleAll = () => {
-    const allCurrentIds = products.map((p) => String(p.id));
-    const allSelected = allCurrentIds.every((id) => selectedIds.has(id));
-    setSelectedIds((prev) => {
-      const updated = new Set(prev);
-      if (allSelected) {
-        allCurrentIds.forEach((id) => updated.delete(id));
+    if (currentlySelected) {
+      if (inBulkRange) {
+        setDeselectedIds((prev) => ({ ...prev, [id]: true }));
       } else {
-        allCurrentIds.forEach((id) => updated.add(id));
+        setSelectedIds((prev) => {
+          const updated = { ...prev };
+          delete updated[id];
+          return updated;
+        });
       }
-      return updated;
-    });
-    setSelectionVersion((v) => v + 1); 
-  };
-
-
-  const handleBulkSelect = async () => {
-    const count = parseInt(selectCount);
-    if (!count || count <= 0) return;
-
-    setIsLoadingSelect(true);
-    const BASE_URL = import.meta.env.VITE_AIC_API_URL;
-    const freshIds = new Set<string>();
-
-    try {
-      let fetchPage = 1;
-      while (freshIds.size < count) {
-        const res = await fetch(`${BASE_URL}/artworks?page=${fetchPage}`);
-        const json = await res.json();
-        const items: Product[] = json.data;
-
-        for (const item of items) {
-          if (freshIds.size >= count) break;
-          if (item.id) freshIds.add(String(item.id));
-        }
-
-        if (fetchPage >= json.pagination.total_pages) break;
-        fetchPage++;
+    } else {
+      if (inBulkRange) {
+        setDeselectedIds((prev) => {
+          const updated = { ...prev };
+          delete updated[id];
+          return updated;
+        });
+      } else {
+        setSelectedIds((prev) => ({ ...prev, [id]: true }));
       }
-
-      setSelectedIds(new Set(freshIds));
-      setSelectionVersion((v) => v + 1); // ✅ force re-render
-    } catch (err) {
-      console.error("Bulk select failed", err);
-    } finally {
-      setIsLoadingSelect(false);
-      setShowDropdown(false);
-      setSelectCount("");
     }
   };
 
+  const toggleAll = () => {
+    const allSelected = products.every((p, i) => isRowSelected(i, String(p.id)));
+    const newDeselected = { ...deselectedIds };
+    const newSelected = { ...selectedIds };
+
+    products.forEach((p, i) => {
+      const id = String(p.id);
+      const globalIndex = (page - 1) * limit + i;
+
+      if (allSelected) {
+        if (globalIndex < bulkCount) {
+          newDeselected[id] = true;
+        } else {
+          delete newSelected[id];
+        }
+      } else {
+        if (globalIndex < bulkCount) {
+          delete newDeselected[id];
+        } else {
+          newSelected[id] = true;
+        }
+      }
+    });
+
+    setDeselectedIds(newDeselected);
+    setSelectedIds(newSelected);
+  };
+
+  const handleBulkSelect = () => {
+    const count = parseInt(selectCount);
+    if (!count || count <= 0) return;
+    setBulkCount(count);
+    setSelectedIds({});
+    setDeselectedIds({});
+    setShowDropdown(false);
+    setSelectCount("");
+  };
+
+  const totalSelected =
+    Math.max(0, Math.min(bulkCount, pagination?.total ?? bulkCount) - Object.keys(deselectedIds).length) +
+    Object.keys(selectedIds).length;
+
   const allCurrentSelected =
-    products.length > 0 && products.every((p) => selectedIds.has(String(p.id)));
+    products.length > 0 && products.every((p, i) => isRowSelected(i, String(p.id)));
 
   const selectionHeader = () => (
     <div style={{ position: "relative", display: "flex", alignItems: "center", gap: "6px" }}>
       <input
-        key={`hdr-${selectionVersion}`} 
         type="checkbox"
         checked={allCurrentSelected}
         onChange={toggleAll}
@@ -116,15 +132,9 @@ export default function Table() {
         <div
           ref={dropdownRef}
           style={{
-            position: "absolute",
-            top: "30px",
-            left: "0",
-            zIndex: 9999,
-            backgroundColor: "#fff",
-            border: "1px solid #dee2e6",
-            borderRadius: "6px",
-            padding: "14px",
-            width: "230px",
+            position: "absolute", top: "30px", left: "0", zIndex: 9999,
+            backgroundColor: "#fff", border: "1px solid #dee2e6",
+            borderRadius: "6px", padding: "14px", width: "230px",
             boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
           }}
         >
@@ -134,52 +144,36 @@ export default function Table() {
           <p style={{ margin: "0 0 10px 0", fontSize: "11px", color: "#888" }}>
             Enter number of rows to select across all pages
           </p>
-          <div style={{ display: "flex", gap: "6px" }}>
-            <input
-              type="number"
-              placeholder="e.g. 20"
-              value={selectCount}
-              onChange={(e) => setSelectCount(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleBulkSelect(); }}
-              style={{
-                flex: 1,
-                padding: "6px 8px",
-                border: "1px solid #dee2e6",
-                borderRadius: "4px",
-                fontSize: "13px",
-                outline: "none",
-              }}
-              autoFocus
-            />
-            <button
-              onClick={handleBulkSelect}
-              disabled={isLoadingSelect}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "#0d6efd",
-                color: "#fff",
-                border: "none",
-                borderRadius: "4px",
-                cursor: isLoadingSelect ? "not-allowed" : "pointer",
-                fontSize: "13px",
-                opacity: isLoadingSelect ? 0.7 : 1,
-              }}
-            >
-              {isLoadingSelect ? "..." : "Select"}
-            </button>
-          </div>
+          <input
+            type="number"
+            placeholder="e.g. 20"
+            value={selectCount}
+            onChange={(e) => setSelectCount(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleBulkSelect(); }}
+            style={{
+              width: "100%", padding: "6px 8px", border: "1px solid #dee2e6",
+              borderRadius: "4px", fontSize: "13px", outline: "none",
+              boxSizing: "border-box",
+            }}
+            autoFocus
+          />
+          <button
+            onClick={handleBulkSelect}
+            style={{
+              marginTop: "8px", width: "100%", padding: "6px",
+              backgroundColor: "#0d6efd", color: "#fff",
+              border: "none", borderRadius: "4px",
+              cursor: "pointer", fontSize: "13px",
+            }}
+          >
+            Select
+          </button>
           <button
             onClick={() => setShowDropdown(false)}
             style={{
-              marginTop: "8px",
-              width: "100%",
-              padding: "5px",
-              background: "transparent",
-              border: "1px solid #dee2e6",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontSize: "12px",
-              color: "#888",
+              marginTop: "6px", width: "100%", padding: "5px",
+              background: "transparent", border: "1px solid #dee2e6",
+              borderRadius: "4px", cursor: "pointer", fontSize: "12px", color: "#888",
             }}
           >
             Cancel
@@ -189,147 +183,118 @@ export default function Table() {
     </div>
   );
 
-  const checkboxBody = (row: Product) => {
+  const checkboxBody = (row: Product, options: { rowIndex: number }) => {
     const id = String(row.id);
+    const isChecked = isRowSelected(options.rowIndex, id);
     return (
-      <input
-        key={`chk-${id}-${selectionVersion}`}
-        type="checkbox"
-        checked={selectedIds.has(id)}
-        onChange={() => toggleRow(id)}
-        style={{ cursor: "pointer", width: "15px", height: "15px", accentColor: "#0d6efd" }}
-      />
+      <div
+        onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleRow(id, options.rowIndex); }}
+        style={{ display: "flex", alignItems: "center", cursor: "pointer" }}
+      >
+        <input
+          type="checkbox"
+          checked={isChecked}
+          onChange={() => {}}
+          style={{ cursor: "pointer", width: "15px", height: "15px", accentColor: "#0d6efd", pointerEvents: "none" }}
+        />
+      </div>
     );
   };
 
   const inscriptionBody = (row: Product) => row.inscriptions ?? "N/A";
 
   const headerStyle = {
-    backgroundColor: "#1e1e2d",
-    color: "#adb5bd",
-    fontSize: "11px",
-    fontWeight: "700" as const,
-    letterSpacing: "0.8px",
-    borderBottom: "2px solid #444",
-    padding: "12px 16px",
+    backgroundColor: "#fff", color: "#555", fontSize: "11px",
+    fontWeight: "700" as const, letterSpacing: "0.8px", padding: "12px 16px",
   };
 
   const bodyStyle = {
-    fontSize: "13px",
-    color: "#555",
-    borderBottom: "1px solid #e9ecef",
-    padding: "10px 16px",
+    fontSize: "13px", color: "#555",
+    borderBottom: "1px solid #e9ecef", padding: "10px 16px",
   };
+
+  const rowClassName = (row: Product, options: { rowIndex: number }) =>
+    isRowSelected(options.rowIndex ?? 0, String(row.id)) ? "selected-row" : "";
 
   if (error) return <p style={{ color: "red" }}>{error}</p>;
 
   return (
-    <div
-      style={{
-        width: "100%",
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: "#f8f9fa",
-      }}
-      onClick={(e) => {
-        if (showDropdown && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-          setShowDropdown(false);
+    <>
+      <style>{`
+        .selected-row td { background-color: #e8f0fe !important; }
+        .selected-row:hover td { background-color: #dce7fd !important; }
+        .p-datatable .p-datatable-tbody > tr:not(.selected-row):hover td {
+          background-color: #f5f5f5 !important;
         }
-      }}
-    >
-      {selectedIds.size > 0 && (
-        <div
-          style={{
-            padding: "8px 20px",
-            backgroundColor: "#0d6efd",
-            color: "#fff",
-            fontSize: "13px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexShrink: 0,
-          }}
-        >
-          <span>✓ {selectedIds.size} item(s) selected across all pages</span>
-          <button
-            onClick={() => { setSelectedIds(new Set()); setSelectionVersion((v) => v + 1); }}
-            style={{
-              background: "transparent",
-              border: "1px solid #fff",
-              color: "#fff",
-              padding: "2px 12px",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontSize: "12px",
-            }}
-          >
-            Clear All
-          </button>
-        </div>
-      )}
+      `}</style>
 
-      <DataTable
-        value={products}
-        dataKey="id"
-        loading={loading}
-        scrollable
-        scrollHeight="flex"
-        style={{ flex: 1, overflow: "hidden" }}
-        tableStyle={{ width: "100%", borderCollapse: "collapse" }}
-        pt={{
-          thead: { style: { backgroundColor: "#1e1e2d" } },
-          headerRow: { style: { backgroundColor: "#1e1e2d" } },
+      <div
+        style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", backgroundColor: "#fff" }}
+        onClick={(e) => {
+          if (showDropdown && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+            setShowDropdown(false);
+          }
         }}
       >
-        <Column
-          header={selectionHeader}
-          body={checkboxBody}
-          headerStyle={{ width: "4rem", backgroundColor: "#1e1e2d", borderBottom: "2px solid #444", padding: "12px 16px" }}
-          bodyStyle={{ padding: "10px 16px", borderBottom: "1px solid #e9ecef" }}
-        />
-        <Column field="title" header="TITLE"
-          style={{ minWidth: "14rem" }}
-          headerStyle={headerStyle}
-          bodyStyle={{ ...bodyStyle, fontWeight: "600", color: "#222" }}
-        />
-        <Column field="place_of_origin" header="PLACE OF ORIGIN"
-          style={{ minWidth: "8rem" }}
-          headerStyle={headerStyle}
-          bodyStyle={bodyStyle}
-        />
-        <Column field="artist_display" header="ARTIST"
-          style={{ minWidth: "14rem" }}
-          headerStyle={headerStyle}
-          bodyStyle={bodyStyle}
-        />
-        <Column field="inscriptions" header="INSCRIPTIONS"
-          body={inscriptionBody}
-          style={{ minWidth: "12rem" }}
-          headerStyle={headerStyle}
-          bodyStyle={bodyStyle}
-        />
-        <Column field="date_start" header="START DATE"
-          style={{ width: "7rem" }}
-          headerStyle={headerStyle}
-          bodyStyle={bodyStyle}
-        />
-        <Column field="date_end" header="END DATE"
-          style={{ width: "7rem" }}
-          headerStyle={headerStyle}
-          bodyStyle={bodyStyle}
-        />
-      </DataTable>
-
-      {pagination && (
-        <div style={{ flexShrink: 0 }}>
-          <CustomPaginator
-            pagination={pagination}
-            first={first}
-            onPageChange={onPageChange}
-          />
+        <div style={{
+          padding: "6px 16px", backgroundColor: "#fff",
+          borderBottom: "1px solid #e9ecef", fontSize: "13px",
+          flexShrink: 0, display: "flex", alignItems: "center",
+          justifyContent: "space-between", minHeight: "36px",
+        }}>
+          <span style={{ color: totalSelected > 0 ? "#333" : "#adb5bd" }}>
+            Selected: <strong>{totalSelected}</strong> rows
+          </span>
+          {totalSelected > 0 && (
+            <button
+              onClick={() => { setSelectedIds({}); setDeselectedIds({}); setBulkCount(0); }}
+              style={{
+                background: "transparent", border: "1px solid #dee2e6", color: "#888",
+                padding: "2px 10px", borderRadius: "4px", cursor: "pointer", fontSize: "12px",
+              }}
+            >
+              Clear All
+            </button>
+          )}
         </div>
-      )}
-    </div>
+
+        <DataTable
+          key={`${page}-${Object.keys(selectedIds).join(",")}-${Object.keys(deselectedIds).join(",")}-${bulkCount}`}
+          value={products}
+          dataKey="id"
+          loading={loading}
+          scrollable
+          scrollHeight="flex"
+          rowClassName={(row: Product, options: any) => rowClassName(row, options)}
+          style={{ flex: 1, overflow: "hidden" }}
+          tableStyle={{ width: "100%", borderCollapse: "collapse" }}
+        >
+          <Column
+            header={selectionHeader}
+            body={(row: Product, options: any) => checkboxBody(row, options)}
+            headerStyle={{ width: "4rem", backgroundColor: "#fff", padding: "12px 16px", borderBottom: "2px solid #e9ecef" }}
+            bodyStyle={{ padding: "10px 16px", borderBottom: "1px solid #e9ecef" }}
+          />
+          <Column field="title" header="TITLE" style={{ minWidth: "14rem" }}
+            headerStyle={headerStyle} bodyStyle={{ ...bodyStyle, fontWeight: "600", color: "#222" }} />
+          <Column field="place_of_origin" header="PLACE OF ORIGIN" style={{ minWidth: "8rem" }}
+            headerStyle={headerStyle} bodyStyle={bodyStyle} />
+          <Column field="artist_display" header="ARTIST" style={{ minWidth: "14rem" }}
+            headerStyle={headerStyle} bodyStyle={bodyStyle} />
+          <Column field="inscriptions" header="INSCRIPTIONS" body={inscriptionBody} style={{ minWidth: "12rem" }}
+            headerStyle={headerStyle} bodyStyle={bodyStyle} />
+          <Column field="date_start" header="START DATE" style={{ width: "7rem" }}
+            headerStyle={headerStyle} bodyStyle={bodyStyle} />
+          <Column field="date_end" header="END DATE" style={{ width: "7rem" }}
+            headerStyle={headerStyle} bodyStyle={bodyStyle} />
+        </DataTable>
+
+        {pagination && (
+          <div style={{ flexShrink: 0 }}>
+            <CustomPaginator pagination={pagination} first={first} onPageChange={onPageChange} />
+          </div>
+        )}
+      </div>
+    </>
   );
 }
