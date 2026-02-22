@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const BASE_URL = import.meta.env.VITE_AIC_API_URL;
+const BASE_URL = import.meta.env.VITE_API_URL;
 
 export const useDataFetch = (endpoint: string, page = 1) => {
   const [data, setData] = useState<any[]>([]);
