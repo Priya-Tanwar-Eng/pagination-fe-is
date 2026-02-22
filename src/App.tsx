@@ -1,12 +1,10 @@
 import React from "react";
-import Pagination from "./components/Table";
-import { Paginator } from "primereact/paginator";
+import Table from "./components/Table";
 
 const App = () => {
   return (
-    <div>
-      <Pagination />
-      <Paginator/>
+    <div style={{ width: "100vw", height: "100vh", overflow: "hidden" }}>
+      <Table />
     </div>
   );
 };
